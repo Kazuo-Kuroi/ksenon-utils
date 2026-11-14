@@ -1,7 +1,8 @@
 # Xenon Utils
 
 A System V style set of 45 core utilities, written in C99 against
-POSIX-2001/XSI. MIT licensed. First target: GNU/Linux.
+POSIX-2001/XSI. MIT licensed. Targets: GNU/Linux, and Belka (Ksenon's
+kernel).
 
 ```sh
 make -f Makefile.gnulinux
@@ -22,6 +23,15 @@ make -f Makefile.gnulinux install PREFIX=/usr/local
 cksum, csplit, expand, fold, join, logname, nl, nohup, pathchk, pr, split,
 tsort, unexpand.
 
+## Belka
+
+Belka builds these itself, as part of its root image: its build compiles
+`cmd/` and `lib/` (with `lib/plat_belka.c` in place of
+`lib/plat_gnulinux.c`) with the same flags as `Makefile.gnulinux`, and
+links each program statically against its C library, mlibc. On Belka the
+mount table is System V's `/etc/mnttab` and a device number keeps the
+major number in its upper 32 bits.
+
 ## Design
 
 - **POSIX, not a historical system.** Where IRIX, UnixWare and POSIX differ,
@@ -33,7 +43,8 @@ tsort, unexpand.
 - **Minimal shim.** `lib/` holds only what POSIX-2001 lacks or what several
   tools would duplicate: a strict non-permuting `getopt`, `getdelim` (which
   arrived in 2008), the `chmod` mode compiler, the tree walker and
-  diagnostics. Platform facts live in `lib/plat_gnulinux.c`.
+  diagnostics. Platform facts live in `lib/plat_gnulinux.c` and
+  `lib/plat_belka.c`.
 - **One binary, several names.** As on IRIX, `cp`, `ln` and `mv` are hard
   links to one binary and `argv[0]` selects behaviour. That binary is linked
   statically, so it still runs while shared libraries are being moved; set
