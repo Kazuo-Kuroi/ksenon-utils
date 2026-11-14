@@ -1,0 +1,184 @@
+# Xenon Utils for GNU/Linux. Build with: make -f Makefile.gnulinux
+# SPDX-License-Identifier: MIT
+#
+# The feature macros expose exactly the POSIX-2001/XSI interface, so an
+# accidental use of a C library extension is a compile error here.
+
+.POSIX:
+.SUFFIXES:
+.SUFFIXES: .c .o
+
+CC = cc
+PREFIX = /usr/local
+DESTDIR =
+BINDIR = $(DESTDIR)$(PREFIX)/bin
+INSTALL_MODE = 755
+
+CSTD = -std=c99 -pedantic -D_POSIX_C_SOURCE=200112L -D_XOPEN_SOURCE=600
+CWARN = -Wall -Wextra -Wshadow -Wstrict-prototypes -Wmissing-prototypes
+OPT = -O2
+CFLAGS = $(OPT) $(CSTD) $(CWARN) -Iinclude
+LDFLAGS =
+
+# The mv/cp/ln binary is static so it still runs if shared libraries are
+# being moved around, which is the situation it is often needed to repair.
+# Set MV_LDFLAGS empty on a system with no static C library.
+MV_LDFLAGS = -static
+
+LIB = lib/libxn.a
+LIBOBJS = lib/getopt.o lib/mode.o lib/plat_gnulinux.o lib/util.o lib/walk.o
+
+# Programs with their own binary.
+PROGS = cmd/basename cmd/cat cmd/chmod cmd/chown cmd/cmp cmd/comm cmd/cut \
+        cmd/date cmd/dd cmd/df cmd/dirname cmd/du cmd/echo cmd/env cmd/expr \
+        cmd/false cmd/head cmd/id cmd/ls cmd/mkdir cmd/mkfifo cmd/mv \
+        cmd/nice cmd/od cmd/paste cmd/printf cmd/pwd cmd/rm cmd/rmdir \
+        cmd/sleep cmd/sort cmd/tail cmd/tee cmd/test cmd/touch cmd/tr \
+        cmd/true cmd/tty cmd/uname cmd/uniq cmd/wc cmd/who
+
+# Names that are hard links to another binary.
+LINKS = cmd/cp cmd/ln cmd/chgrp cmd/[
+
+all: $(PROGS) $(LINKS)
+
+$(LIB): $(LIBOBJS)
+	rm -f $@
+	$(AR) -rc $@ $(LIBOBJS)
+	-ranlib $@
+
+$(LIBOBJS): include/xn.h
+
+# The objects inherit struct layouts from the shared header.
+CMDOBJS = cmd/basename.o cmd/cat.o cmd/chmod.o cmd/chown.o cmd/cmp.o \
+          cmd/comm.o cmd/cut.o cmd/date.o cmd/dd.o cmd/df.o cmd/dirname.o \
+          cmd/du.o cmd/echo.o cmd/env.o cmd/expr.o cmd/false.o cmd/head.o \
+          cmd/id.o cmd/ls.o cmd/mkdir.o cmd/mkfifo.o cmd/mv.o cmd/nice.o \
+          cmd/od.o cmd/paste.o cmd/printf.o cmd/pwd.o cmd/rm.o cmd/rmdir.o \
+          cmd/sleep.o cmd/sort.o cmd/tail.o cmd/tee.o cmd/test.o cmd/touch.o \
+          cmd/tr.o cmd/true.o cmd/tty.o cmd/uname.o cmd/uniq.o cmd/wc.o \
+          cmd/who.o
+
+$(CMDOBJS): include/xn.h
+
+$(PROGS): $(LIB)
+
+.c.o:
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+CMDLINK = $(CC) $(LDFLAGS) -o $@ $@.o $(LIB)
+
+cmd/basename: cmd/basename.o
+	$(CMDLINK)
+cmd/cat: cmd/cat.o
+	$(CMDLINK)
+cmd/chmod: cmd/chmod.o
+	$(CMDLINK)
+cmd/chown: cmd/chown.o
+	$(CMDLINK)
+cmd/cmp: cmd/cmp.o
+	$(CMDLINK)
+cmd/comm: cmd/comm.o
+	$(CMDLINK)
+cmd/cut: cmd/cut.o
+	$(CMDLINK)
+cmd/date: cmd/date.o
+	$(CMDLINK)
+cmd/dd: cmd/dd.o
+	$(CMDLINK)
+cmd/df: cmd/df.o
+	$(CMDLINK)
+cmd/dirname: cmd/dirname.o
+	$(CMDLINK)
+cmd/du: cmd/du.o
+	$(CMDLINK)
+cmd/echo: cmd/echo.o
+	$(CMDLINK)
+cmd/env: cmd/env.o
+	$(CMDLINK)
+cmd/expr: cmd/expr.o
+	$(CMDLINK)
+cmd/false: cmd/false.o
+	$(CMDLINK)
+cmd/head: cmd/head.o
+	$(CMDLINK)
+cmd/id: cmd/id.o
+	$(CMDLINK)
+cmd/ls: cmd/ls.o
+	$(CMDLINK)
+cmd/mkdir: cmd/mkdir.o
+	$(CMDLINK)
+cmd/mkfifo: cmd/mkfifo.o
+	$(CMDLINK)
+cmd/mv: cmd/mv.o
+	$(CC) $(LDFLAGS) $(MV_LDFLAGS) -o $@ $@.o $(LIB)
+cmd/nice: cmd/nice.o
+	$(CMDLINK)
+cmd/od: cmd/od.o
+	$(CMDLINK)
+cmd/paste: cmd/paste.o
+	$(CMDLINK)
+cmd/printf: cmd/printf.o
+	$(CMDLINK)
+cmd/pwd: cmd/pwd.o
+	$(CMDLINK)
+cmd/rm: cmd/rm.o
+	$(CMDLINK)
+cmd/rmdir: cmd/rmdir.o
+	$(CMDLINK)
+cmd/sleep: cmd/sleep.o
+	$(CMDLINK)
+cmd/sort: cmd/sort.o
+	$(CMDLINK)
+cmd/tail: cmd/tail.o
+	$(CMDLINK)
+cmd/tee: cmd/tee.o
+	$(CMDLINK)
+cmd/test: cmd/test.o
+	$(CMDLINK)
+cmd/touch: cmd/touch.o
+	$(CMDLINK)
+cmd/tr: cmd/tr.o
+	$(CMDLINK)
+cmd/true: cmd/true.o
+	$(CMDLINK)
+cmd/tty: cmd/tty.o
+	$(CMDLINK)
+cmd/uname: cmd/uname.o
+	$(CMDLINK)
+cmd/uniq: cmd/uniq.o
+	$(CMDLINK)
+cmd/wc: cmd/wc.o
+	$(CMDLINK)
+cmd/who: cmd/who.o
+	$(CMDLINK)
+
+# cp and ln are the mv binary under other names, selected by argv[0].
+cmd/cp cmd/ln: cmd/mv
+	rm -f $@
+	ln cmd/mv $@
+
+cmd/chgrp: cmd/chown
+	rm -f $@
+	ln cmd/chown $@
+
+cmd/[: cmd/test
+	rm -f '$@'
+	ln cmd/test '$@'
+
+check: all
+	sh tests/run.sh
+
+install: all
+	mkdir -p $(BINDIR)
+	for prog in $(PROGS); do \
+	    cp $$prog $(BINDIR)/ && chmod $(INSTALL_MODE) \
+	        $(BINDIR)/`basename $$prog` || exit 1; \
+	done
+	rm -f $(BINDIR)/cp $(BINDIR)/ln $(BINDIR)/chgrp '$(BINDIR)/['
+	ln $(BINDIR)/mv $(BINDIR)/cp
+	ln $(BINDIR)/mv $(BINDIR)/ln
+	ln $(BINDIR)/chown $(BINDIR)/chgrp
+	ln $(BINDIR)/test '$(BINDIR)/['
+
+clean:
+	rm -f $(PROGS) $(LINKS) $(LIB) lib/*.o cmd/*.o
