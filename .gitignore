@@ -1,0 +1,5 @@
+# Build products (make -f Makefile.gnulinux, or a port's build).
+*.o
+*.a
+/cmd/*
+!/cmd/*.c
