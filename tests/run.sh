@@ -571,12 +571,20 @@ check "ls -q" 0 "a?b" sh -c 'mkdir lsq; touch "lsq/a$(printf "\001")b"; "$1/ls" 
 check "ls -s total" 0 "total 0" sh -c '"$1/ls" -s lst | head -n 1' sh "$XN"
 check "ls -f unsorted all" 0 "2" sh -c '"$1/ls" -f lst | grep -c "^\.\.*$"' sh "$XN"
 check "ls -i" 0 "$(ls -i f1 | tr -s ' ')" sh -c '"$1/ls" -i f1' sh "$XN"
-check "ls dev" 0 "1, 3" sh -c '"$1/ls" -l /dev/null | awk "{print \$5, \$6}"' sh "$XN"
+# The device numbers stat reports: GNU's in hex (%t, %T), BSD's (%Hr, %Lr).
+devnums() {
+    if stat -c %t / >/dev/null 2>&1; then
+        printf '%d, %d\n' "0x$(stat -c %t "$1")" "0x$(stat -c %T "$1")"
+    else
+        stat -f '%Hr, %Lr' "$1"
+    fi
+}
+check "ls dev" 0 "$(devnums /dev/null)" sh -c '"$1/ls" -l /dev/null | awk "{print \$5, \$6}"' sh "$XN"
 
 # --- du ---
 mkdir dud dud/in
-head -c 8192 /dev/zero > dud/f
-head -c 8192 /dev/zero > dud/in/g
+dd if=/dev/zero of=dud/f bs=8192 count=1 2>/dev/null
+dd if=/dev/zero of=dud/in/g bs=8192 count=1 2>/dev/null
 check "du -s lines" 0 "1" sh -c '"$1/du" -s dud | wc -l | tr -d " "' sh "$XN"
 check "du lines" 0 "2" sh -c '"$1/du" dud | wc -l | tr -d " "' sh "$XN"
 check "du -a lines" 0 "4" sh -c '"$1/du" -a dud | wc -l | tr -d " "' sh "$XN"
@@ -621,8 +629,8 @@ check "od -c esc" 0 "0000000  \\n  \\t  \\0 001
 0000004" sh -c 'printf "\n\t\000\001" | "$1/od" -c' sh "$XN"
 check "od star" 0 "0000000 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 *
-0000060" sh -c 'head -c 48 /dev/zero | "$1/od" -t x1' sh "$XN"
-check "od -v" 0 "4" sh -c 'head -c 48 /dev/zero | "$1/od" -v -t x1 | wc -l | tr -d " "' sh "$XN"
+0000060" sh -c 'dd if=/dev/zero bs=48 count=1 2>/dev/null | "$1/od" -t x1' sh "$XN"
+check "od -v" 0 "4" sh -c 'dd if=/dev/zero bs=48 count=1 2>/dev/null | "$1/od" -v -t x1 | wc -l | tr -d " "' sh "$XN"
 check "od multi file" 0 "0000000 41 42 43 44 41 42 43 44
 0000010" xn od -t x1 oin oin
 check "od legacy off" 0 "0000002 042103
@@ -703,7 +711,9 @@ check "env notfound" 127 "" xn env ./nosuchcmd
 check "env noexec" 126 "" sh -c 'touch ne.sh; chmod 644 ne.sh; "$1/env" ./ne.sh' sh "$XN"
 check "nice run" 0 "x" xn nice -n 1 "$XN/echo" x
 check "nice notfound" 127 "" xn nice ./nosuchcmd
-check "nice value" 0 "5" sh -c '"$1/nice" -n 5 sh -c "nice" | sed s/^/x/ | tr -d x' sh "$XN"
+# The nice value through ps -l (its NI column, the eighth): only how far
+# nice moves it is compared, since systems count from 0 or from NZERO.
+check "nice value" 0 "5" sh -c 'a=$(ps -l -p $$ | awk "NR == 2 { print \$8 }"); b=$("$1/nice" -n 5 sh -c "ps -l -p \$\$" | awk "NR == 2 { print \$8 }"); echo $((b - a))' sh "$XN"
 check "sleep 0" 0 "" xn sleep 0
 check "sleep bad" 1 "" xn sleep abc
 check "sleep neg" 1 "" xn sleep -1
@@ -755,20 +765,38 @@ while [ "$i" -lt 30 ]; do
     CHAIN=$CHAIN/$LONGNAME
     i=$((i + 1))
 done
+# The tree is DIR/CHAIN/inner/CHAIN/{leaf,lnk,pipe}. It is made from the
+# bottom up, each step a short mkdir and two short renames that wrap it
+# one directory deeper, and read with find -execdir, which goes down a
+# directory at a time; no path past PATH_MAX is ever named, so this
+# works whatever the system's limit (and whatever its shell's cd does).
+# Only the utilities under test are given the whole depth, through a
+# short operand.
+deep_wrap() {   # deep_wrap NAME: dm.tree becomes dm.tree/NAME
+    mkdir dm.wrap && mv dm.tree dm.wrap/"$1" && mv dm.wrap dm.tree
+}
 deep_make() {
-    mkdir -p "dm.inner/$CHAIN" "$1/$CHAIN" || exit 1
-    printf 'bottom\n' > "dm.inner/$CHAIN/leaf"
-    ln -s leaf "dm.inner/$CHAIN/lnk"
-    mkfifo "dm.inner/$CHAIN/pipe"
-    mv dm.inner "$1/$CHAIN/inner"
+    mkdir dm.tree || exit 1
+    printf 'bottom\n' > dm.tree/leaf
+    ln -s leaf dm.tree/lnk
+    mkfifo dm.tree/pipe
+    j=0
+    while [ "$j" -lt 30 ]; do
+        deep_wrap "$LONGNAME" || exit 1
+        j=$((j + 1))
+    done
+    deep_wrap inner || exit 1
+    j=0
+    while [ "$j" -lt 30 ]; do
+        deep_wrap "$LONGNAME" || exit 1
+        j=$((j + 1))
+    done
+    mv dm.tree "$1" || exit 1
 }
 deep_read() {
-    peek=$(dirname "$1")/dm.peek
-    mv "$1/$CHAIN/inner" "$peek" || return 1
-    cat "$peek/$CHAIN/leaf"
-    readlink "$peek/$CHAIN/lnk"
-    ls -ld "$peek/$CHAIN/leaf" "$peek/$CHAIN" | cut -c1-10 | sort
-    mv "$peek" "$1/$CHAIN/inner"
+    find "$1" -name leaf -execdir cat {} \;
+    find "$1" -name lnk -execdir readlink {} \;
+    find "$1" -name leaf -execdir ls -ld {} . \; | cut -c1-10 | sort
 }
 deep_make deep
 check "deep is past PATH_MAX" 0 "yes" sh -c '[ $(( ${#2} * 2 )) -gt "$(getconf PATH_MAX /)" ] && echo yes' sh x "$CHAIN"
