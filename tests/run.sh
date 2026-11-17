@@ -52,6 +52,21 @@ xn() {
     "$XN/$tool" "$@"
 }
 
+# ftime x|y FILE: the access (x) or modification (y) time, as GNU's
+# "stat -c %x" prints it; BSD's stat takes a strftime format instead.
+# Only whole seconds are compared, so the fraction is written out.
+ftime() {
+    if stat -c %y / >/dev/null 2>&1; then
+        stat -c "%$1" "$2"
+    else
+        case $1 in x) which=a ;; *) which=m ;; esac
+        stat -f "%S$which" -t '%Y-%m-%d %H:%M:%S.000000000 %z' "$2"
+    fi
+}
+
+# Another file system, for moves across devices; skipped if there is none.
+XDEVDIR=${XDEVDIR:-/dev/shm}
+
 # --- every expected binary and link exists ---
 for tool in basename cat chgrp chmod chown cmp comm cp cut date dd df dirname \
             du echo env expr false head id ln ls mkdir mkfifo mv nice od \
@@ -391,13 +406,13 @@ check "touch exists" 0 "" test -f tf
 check "touch -c" 0 "" xn touch -c tnone
 check "touch -c gone" 1 "" test -e tnone
 check "touch -t" 0 "" xn touch -t 200102030405.06 tf
-check "touch -t value" 0 "2001-02-03 04:05:06.000000000 +0000" sh -c 'stat -c %y tf'
+check "touch -t value" 0 "2001-02-03 04:05:06.000000000 +0000" ftime y tf
 check "touch -r" 0 "" sh -c 'touch tg; "$1/touch" -r tf tg' sh "$XN"
-check "touch -r value" 0 "2001-02-03 04:05:06.000000000 +0000" sh -c 'stat -c %y tg'
+check "touch -r value" 0 "2001-02-03 04:05:06.000000000 +0000" ftime y tg
 check "touch -m only" 0 "" xn touch -m -t 199901010000 tf
-check "touch -m atime kept" 0 "2001-02-03 04:05:06.000000000 +0000" sh -c 'stat -c %x tf'
+check "touch -m atime kept" 0 "2001-02-03 04:05:06.000000000 +0000" ftime x tf
 check "touch legacy" 0 "" xn touch 0102030499 tl
-check "touch legacy value" 0 "1999-01-02 03:04:00.000000000 +0000" sh -c 'stat -c %y tl'
+check "touch legacy value" 0 "1999-01-02 03:04:00.000000000 +0000" ftime y tl
 check "touch bad" 1 "" xn touch -t 13320000 tf
 
 # --- cp ---
@@ -420,7 +435,7 @@ check "cp -R fifo" 0 "" sh -c 'mkdir ff1; mkfifo ff1/p; "$1/cp" -R ff1 ff3' sh "
 check "cp -R fifo type" 0 "" test -p ff3/p
 check "cp -p" 0 "" sh -c 'touch -t 200001010000 psrc; chmod 640 psrc; "$1/cp" -p psrc pdst' sh "$XN"
 check "cp -p mode" 0 "-rw-r-----" sh -c 'ls -l pdst | cut -c1-10'
-check "cp -p time" 0 "2000-01-01 00:00:00.000000000 +0000" sh -c 'stat -c %y pdst'
+check "cp -p time" 0 "2000-01-01 00:00:00.000000000 +0000" ftime y pdst
 check "cp self-copy" 1 "" sh -c 'mkdir sc; touch sc/f; "$1/cp" -R sc sc/inner' sh "$XN"
 check "cp self bounded" 0 "1" sh -c 'find sc -type d -name inner | wc -l'
 check "cp -f over readonly" 0 "" sh -c 'printf x > ro; chmod 444 ro; "$1/cp" -f src ro' sh "$XN"
@@ -447,13 +462,13 @@ check "mv nested" 0 "mv" cat mvf/mve/mv2
 check "mv into self" 1 "" xn mv mvf mvf/x
 check "mv -i no" 0 "" sh -c 'printf a > ma; printf b > mb; printf "n\n" | "$1/mv" -i ma mb' sh "$XN"
 check "mv -i kept" 0 "b" sh -c 'cat mb; echo'
-if [ -d /dev/shm ] && [ -w /dev/shm ]; then
-    XDEV=$(mktemp -d /dev/shm/xnt.XXXXXX)
+if [ -d "$XDEVDIR" ] && [ -w "$XDEVDIR" ]; then
+    XDEV=$(mktemp -d "$XDEVDIR/xnt.XXXXXX")
     check "mv cross-dev" 0 "" sh -c 'mkdir xd; printf z > xd/f; touch -t 200202020202 xd/f; ln -s f xd/l; "$1/mv" xd "$2/xd"' sh "$XN" "$XDEV"
     check "mv cross-dev gone" 1 "" test -e xd
     check "mv cross-dev data" 0 "z" sh -c 'cat "$1/xd/f"; echo' sh "$XDEV"
     check "mv cross-dev link" 0 "" test -h "$XDEV/xd/l"
-    check "mv cross-dev time" 0 "2002-02-02 02:02:00.000000000 +0000" stat -c %y "$XDEV/xd/f"
+    check "mv cross-dev time" 0 "2002-02-02 02:02:00.000000000 +0000" ftime y "$XDEV/xd/f"
     rm -rf "$XDEV"
 fi
 
@@ -659,21 +674,21 @@ check "date bad" 1 "" xn date notadate
 check "date long fmt" 0 "1000" sh -c 'f=$(printf "%01000d" 0); "$1/date" "+$f" | tr -d "\n" | wc -c | tr -d " "' sh "$XN"
 
 # --- identity and system ---
-check "id -u" 0 "$(/usr/bin/id -u)" xn id -u
-check "id -un" 0 "$(/usr/bin/id -un)" xn id -un
-check "id -g" 0 "$(/usr/bin/id -g)" xn id -g
-check "id -G" 0 "$(/usr/bin/id -G)" xn id -G
-check "id full" 0 "$(/usr/bin/id)" xn id
+check "id -u" 0 "$(id -u)" xn id -u
+check "id -un" 0 "$(id -un)" xn id -un
+check "id -g" 0 "$(id -g)" xn id -g
+check "id -G" 0 "$(id -G)" xn id -G
+check "id full" 0 "$(id)" xn id
 check "id root" 0 "0" xn id -u root
 check "id bad user" 1 "" xn id nosuchuserxx
 check "id bad combo" 1 "" xn id -n
-check "uname" 0 "$(/bin/uname -s)" xn uname
-check "uname -m" 0 "$(/bin/uname -m)" xn uname -m
-check "uname -a" 0 "$(/bin/uname -s -n -r -v -m)" xn uname -a
-check "pwd -P" 0 "$(/bin/pwd -P)" xn pwd -P
+check "uname" 0 "$(uname -s)" xn uname
+check "uname -m" 0 "$(uname -m)" xn uname -m
+check "uname -a" 0 "$(uname -s -n -r -v -m)" xn uname -a
+check "pwd -P" 0 "$(pwd -P)" xn pwd -P
 check "pwd logical" 0 "$WORK/lsd" sh -c 'mkdir -p lp; ln -s "$2" lp/l; cd lp/l && PWD="$PWD" "$1/pwd" | sed "s#$2\$#$2#;s#.*/lp/l#$2#"' sh "$XN" "$WORK/lsd"
-check "pwd bad PWD" 0 "$(/bin/pwd -P)" env PWD=/nonexistent "$XN/pwd"
-check "pwd dotted PWD" 0 "$(/bin/pwd -P)" env PWD="$WORK/." "$XN/pwd"
+check "pwd bad PWD" 0 "$(pwd -P)" env PWD=/nonexistent "$XN/pwd"
+check "pwd dotted PWD" 0 "$(pwd -P)" env PWD="$WORK/." "$XN/pwd"
 check "tty -s" 1 "" sh -c '"$1/tty" -s </dev/null' sh "$XN"
 check "tty none" 1 "not a tty" sh -c '"$1/tty" </dev/null' sh "$XN"
 check "who runs" 0 "" sh -c '"$1/who" >/dev/null' sh "$XN"
@@ -741,19 +756,19 @@ while [ "$i" -lt 30 ]; do
     i=$((i + 1))
 done
 deep_make() {
-    /bin/mkdir -p "dm.inner/$CHAIN" "$1/$CHAIN" || exit 1
+    mkdir -p "dm.inner/$CHAIN" "$1/$CHAIN" || exit 1
     printf 'bottom\n' > "dm.inner/$CHAIN/leaf"
-    /bin/ln -s leaf "dm.inner/$CHAIN/lnk"
-    /usr/bin/mkfifo "dm.inner/$CHAIN/pipe"
-    /bin/mv dm.inner "$1/$CHAIN/inner"
+    ln -s leaf "dm.inner/$CHAIN/lnk"
+    mkfifo "dm.inner/$CHAIN/pipe"
+    mv dm.inner "$1/$CHAIN/inner"
 }
 deep_read() {
     peek=$(dirname "$1")/dm.peek
-    /bin/mv "$1/$CHAIN/inner" "$peek" || return 1
+    mv "$1/$CHAIN/inner" "$peek" || return 1
     cat "$peek/$CHAIN/leaf"
     readlink "$peek/$CHAIN/lnk"
-    /bin/ls -ld "$peek/$CHAIN/leaf" "$peek/$CHAIN" | cut -c1-10 | sort
-    /bin/mv "$peek" "$1/$CHAIN/inner"
+    ls -ld "$peek/$CHAIN/leaf" "$peek/$CHAIN" | cut -c1-10 | sort
+    mv "$peek" "$1/$CHAIN/inner"
 }
 deep_make deep
 check "deep is past PATH_MAX" 0 "yes" sh -c '[ $(( ${#2} * 2 )) -gt "$(getconf PATH_MAX /)" ] && echo yes' sh x "$CHAIN"
@@ -779,8 +794,8 @@ check "deep cp -R nested" 0 "bottom
 leaf
 -rw-------
 drwx------" deep_read deepcp/deep
-if [ -d /dev/shm ] && [ -w /dev/shm ]; then
-    XDEV=$(mktemp -d /dev/shm/xnt.XXXXXX)
+if [ -d "$XDEVDIR" ] && [ -w "$XDEVDIR" ]; then
+    XDEV=$(mktemp -d "$XDEVDIR/xnt.XXXXXX")
     check "deep mv cross-dev" 0 "" xn mv deepcp2 "$XDEV/moved"
     check "deep mv gone" 1 "" test -e deepcp2
     check "deep mv content" 0 "bottom
